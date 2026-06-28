@@ -984,6 +984,78 @@ app.get('/api/examples', async (req, res) => {
   }
 });
 
+// Fetch a URL as text, following a few redirects (https only). Requests an
+// uncompressed body so we can regex it directly.
+function httpGetText(url, timeoutMs = 12000, redirectsLeft = 4) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      headers: { 'User-Agent': 'board_shazam/1.0', 'Accept-Encoding': 'identity', 'Accept': 'text/html' },
+    }, resp => {
+      if ([301, 302, 303, 307, 308].includes(resp.statusCode) && resp.headers.location && redirectsLeft > 0) {
+        resp.resume();
+        const next = new URL(resp.headers.location, url).toString();
+        return resolve(httpGetText(next, timeoutMs, redirectsLeft - 1));
+      }
+      if (resp.statusCode !== 200) { resp.resume(); return reject(new Error('HTTP ' + resp.statusCode)); }
+      let body = '';
+      resp.setEncoding('utf8');
+      resp.on('data', d => { body += d; });
+      resp.on('end', () => resolve(body));
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error('timeout')); });
+  });
+}
+
+// Find the board's product photo in a Renesas board-page's HTML. Renesas hosts
+// these at /sites/default/files/<slug>-board*.png (with -kit / generic fallbacks).
+function findBoardImage(html, slug) {
+  const pats = [
+    new RegExp(`/sites/default/files/${slug}-board[^"'\\s)]*\\.(?:png|jpe?g|webp)`, 'i'),
+    new RegExp(`/sites/default/files/${slug}-kit[^"'\\s)]*\\.(?:png|jpe?g|webp)`, 'i'),
+    new RegExp(`/sites/default/files/${slug}[^"'\\s)]*\\.(?:png|jpe?g|webp)`, 'i'),
+  ];
+  for (const re of pats) {
+    const m = html.match(re);
+    if (m) return m[0].startsWith('http') ? m[0] : 'https://www.renesas.com' + m[0];
+  }
+  return null;
+}
+
+// REST: board picture + useful information links for an identified board.
+// Image is scraped from the official Renesas board page (cached 24h); links are
+// derived from the board name. Always returns links even if the image/page is
+// unavailable, so the UI degrades gracefully.
+const boardInfoCache = new Map();
+const BOARD_INFO_TTL_MS = 24 * 60 * 60 * 1000;
+app.get('/api/board-info', async (req, res) => {
+  const board = (req.query.board || '').trim();
+  if (!board) return res.status(400).json({ error: 'board param required' });
+
+  const cached = boardInfoCache.get(board);
+  if (cached && (Date.now() - cached.at) < BOARD_INFO_TTL_MS) return res.json(cached.data);
+
+  const slug   = board.toLowerCase();              // EK-RA8M1  → ek-ra8m1
+  const ghSlug = slug.replace(/-/g, '_');          //           → ek_ra8m1
+  const productUrl = `https://www.renesas.com/en/design-resources/boards-kits/${slug}`;
+  const data = {
+    board,
+    productUrl,
+    imageUrl: null,
+    links: [
+      { label: 'Renesas Board Page',    url: productUrl },
+      { label: 'Documents & Downloads', url: `https://www.renesas.com/en/search?q=${encodeURIComponent(board)}` },
+      { label: 'FSP Example Projects',  url: `https://github.com/renesas/ra-fsp-examples/tree/master/example_projects/${ghSlug}` },
+    ],
+  };
+  try {
+    data.imageUrl = findBoardImage(await httpGetText(productUrl), slug);
+  } catch { /* page missing (e.g. legacy board) — links still useful */ }
+
+  boardInfoCache.set(board, { at: Date.now(), data });
+  res.json(data);
+});
+
 // REST: get detected e2studio path
 app.get('/api/e2studio-path', (req, res) => {
   res.json({ path: E2STUDIO_EXE, found: !!E2STUDIO_EXE });

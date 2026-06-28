@@ -943,6 +943,8 @@ function renderResult(r) {
       </div>
     </div>` : ''}
 
+    <div id="boardInfoBox"></div>
+
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:18px;">
       ${infoItems.map(([k, v]) => infoCard(k, v)).join('')}
     </div>
@@ -999,6 +1001,9 @@ function renderResult(r) {
     $('projectSearch').addEventListener('input', (e) => filterProjects(e.target.value));
   }
 
+  // board picture + useful information links (loaded async for the board)
+  if (hint && hint.board) loadBoardInfo(hint.board);
+
   // wire board-variant switcher — re-targets FSP examples & e2 studio at the
   // chosen board (EK / FPB / CK / MCK / RSSK) without re-scanning the hardware.
   if (variants.length > 1) {
@@ -1018,6 +1023,7 @@ function renderResult(r) {
         const grid = $('projectGrid');
         if (grid) grid.innerHTML = `<div style="grid-column:1/-1; padding:14px; text-align:center; font-size:13px; color:var(--ink-3);">Loading…</div>`;
         loadProjects(b);
+        loadBoardInfo(b);
       });
     });
   }
@@ -1031,6 +1037,36 @@ function rawBlock(raw) {
     <summary style="cursor:pointer; font-size:12px; color:var(--ink-3); user-select:none;">Show raw J-Link output</summary>
     <pre style="margin-top:8px; background:var(--term-bg); border:1px solid var(--line); border-radius:2px; padding:12px; font-family:var(--font-mono); font-size:12px; color:var(--ink-2); white-space:pre-wrap; max-height:300px; overflow:auto;" id="${id}">${escHtml(raw)}</pre>
   </details>`;
+}
+
+// ── Board picture + information links ────────────────────────
+// Fetches the official board photo + useful links from the server and renders
+// them above the device-info grid. Degrades gracefully (links only / hidden).
+async function loadBoardInfo(board) {
+  const box = $('boardInfoBox');
+  if (!box) return;
+  try {
+    const res = await fetch(`/api/board-info?board=${encodeURIComponent(board)}`);
+    const d = await res.json();
+    const links = (d.links || []).map(l =>
+      `<a href="${escHtml(l.url)}" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; padding:8px 12px; background:var(--panel-2); border:1px solid var(--line-2); border-radius:2px; color:var(--brand); font-size:12px; font-weight:700; text-decoration:none;" data-hover="border-color:var(--brand); background:var(--brand-soft);">${escHtml(l.label)} ↗</a>`
+    ).join('');
+    const img = d.imageUrl
+      ? `<div style="flex-shrink:0; width:180px; height:150px; background:var(--raise); border:1px solid var(--line); border-radius:2px; display:flex; align-items:center; justify-content:center; padding:10px;">
+           <img src="${escHtml(d.imageUrl)}" alt="${escHtml(board)}" referrerpolicy="no-referrer" style="max-width:100%; max-height:100%; object-fit:contain;" onerror="this.parentElement.style.display='none'">
+         </div>`
+      : '';
+    if (!d.imageUrl && !links) { box.innerHTML = ''; return; }
+    box.innerHTML = `
+      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:16px; margin-bottom:18px;">
+        ${img}
+        <div style="flex:1; min-width:200px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-3); margin-bottom:10px;">${escHtml(board)} — Board Information</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">${links}</div>
+        </div>
+      </div>`;
+    wireInteractions(box);
+  } catch (e) { box.innerHTML = ''; }
 }
 
 // ── FSP example projects ────────────────────────────────────
