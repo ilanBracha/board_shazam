@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:claude.ai)",
+      "Bash(claude --version)",
+      "Bash(find \"C:\\\\Users\\\\a5146752\\\\OneDrive - Renesas Electronics Corporation\\\\Documents\\\\jlink-web\" -iname \"*.dc.html\" -o -iname \"*J-Link Web*\" 2>/dev/null; echo \"---done---\")",
+      "Bash(claude mcp *)",
+      "Bash(node -e ' *)",
+      "Bash(mkdir -p public/assets)",
+      "Bash(cp \"/tmp/design/85521b7a-a1da-49d0-b3c7-023afcf59933.png\" public/assets/renesas-light.png)",
+      "Bash(cp \"/tmp/design/8247c258-52a5-49ec-920f-4634dbeaeb68.png\" public/assets/renesas-dark.png)",
+      "Bash(cp \"/tmp/design/8256ad50-785a-42df-baac-cb9c3ac21461.bin\" public/assets/arialn.ttf)",
+      "Bash(cp \"/tmp/design/892cfdea-5a2f-443e-abbc-7490136aa20f.woff2\" public/assets/archivo-vietnamese.woff2)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(cd *)",
+      "Bash(node --check server.js)",
+      "Bash(PORT=3778 node server.js)",
+      "Bash(curl -s -w \"\\\\n[http %{http_code}]\\\\n\" -X POST -H \"Content-Type: application/json\" -d '{}' http://127.0.0.1:3778/api/auto-identify)",
+      "Bash(curl -s -w \"\\\\n\" http://127.0.0.1:3778/api/jlink-path)",
+      "Bash(pkill -f \"server.js\")",
+      "Read(//c/Renesas/**)",
+      "Bash(PORT=3780 node server.js)",
+      "Bash(curl -s -o /dev/null -w \"http=%{http_code}\\\\n\" http://127.0.0.1:3780/)",
+      "Bash(curl -s -w \"\\\\n\" http://127.0.0.1:3780/api/e2studio-path)",
+      "Bash(curl -s -w \" [%{http_code}]\\\\n\" -X POST -H \"Content-Type: application/json\" -d '{\"path\":\"C:\\\\\\\\Renesas\\\\\\\\fsp_workspace\\\\\\\\adc_baremetal\",\"board\":\"EK-RA6M4\",\"project\":\"adc_baremetal\"}' http://127.0.0.1:3780/api/open-e2studio)",
+      "Bash(PORT=3782 node server.js)",
+      "Read(//c/Users/a5146752/e2_studio/**)",
+      "Bash(grep -iE \"\\\\.exe$\")",
+      "Bash(grep -iE \"c\\\\.exe$\")",
+      "Bash(PORT=3783 node server.js)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -w \"\\\\n\" http://127.0.0.1:3783/api/e2studio-path)",
+      "Bash(grep -nE \"a5146752|a5133422|C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\[A-Za-z0-9]\" server.js public/index.html)",
+      "Bash(PORT=3784 node server.js)",
+      "Bash(curl -s -o /dev/null -w \"page http=%{http_code} bytes=%{size_download}\\\\n\" http://127.0.0.1:3784/)"
+    ]
+  }
+}
