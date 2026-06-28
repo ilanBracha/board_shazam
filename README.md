@@ -53,6 +53,39 @@ The detected path is shown in the bottom-left of the UI and on server startup in
 
 ---
 
+## Supported Renesas Boards (Auto-Identify)
+
+Click **Detect Your Target** and the tool identifies the connected board over
+SWD/JTAG with no part number required. It then offers to browse that board's FSP
+example projects and open them in e2 studio.
+
+Identification combines three signals (most-specific first):
+
+1. **J-Link OB firmware token** — the on-board debugger names the exact MCU group
+   (e.g. `J-Link OB-RA6E1`), which resolves to a board even when the MCU itself is
+   locked or unreachable.
+2. **On-chip memory probing** — flash/SRAM size pins the MCU group within a core.
+3. **ARM CPUID / DP IDCODE** — narrows the target to a core and RA series.
+
+Coverage spans the full RA lineup across every board family — **EK** (Evaluation
+Kits), **FPB** (Fast Prototyping Boards), **CK** (Cloud Kit), **MCK** (Motor
+Control Kits) and **RSSK**:
+
+| Series | Core | Example boards |
+|---|---|---|
+| RA0 | Cortex-M23 | FPB-RA0E1, FPB-RA0E2, FPB-RA0E3, FPB-RA0L1 |
+| RA2 | Cortex-M23 | EK-RA2A1/A2, EK-RA2E1/E2, EK-RA2L1/L2, FPB-RA2E3, FPB-RA2T1 |
+| RA4 (M4) | Cortex-M4 | EK-RA4M1, EK-RA4W1 |
+| RA4 (M33) | Cortex-M33 | EK-RA4M2/M3, FPB-RA4E1, EK-RA4E2/FPB-RA4E2, EK-RA4C1, EK-RA4L1, FPB-RA4T1/MCK-RA4T1 |
+| RA6 (M4) | Cortex-M4 | EK-RA6M1/M2/M3 (+RA6M3G), RSSK-RA6T1 |
+| RA6 (M33) | Cortex-M33 | EK-RA6M4, EK-RA6M5/CK-RA6M5, FPB-RA6E1, EK-RA6E2/FPB-RA6E2, MCK-RA6T2, FPB-RA6T3/MCK-RA6T3 |
+| RA8 | Cortex-M85 | EK-RA8M1/M2, EK-RA8D1/D2, EK-RA8E2, EK-RA8P1, FPB-RA8E1, MCK-RA8T1, EK-RA8T2/MCK-RA8T2 |
+
+When several boards share the same MCU (e.g. EK-RA6M5 and CK-RA6M5), the result
+panel shows all of them — click one to browse *its* FSP examples. The board
+catalog lives in `RA_CATALOG` in `server.js`; add a row there to support a new
+board.
+
 ## Features
 
 ### Interactive Terminal Session

@@ -178,18 +178,27 @@ const DP_IDCODES = {
   '0x0BD22477': { dpCore: 'Cortex-M55',       devices: ['Cortex-M55']                             },
 };
 
-// CPUID PartNo → Renesas vendor / product hint shown in the UI.
-// Only Renesas products are listed. Non-Renesas cores show core name only.
-// Phase 3 (identifyRenesasRA) overrides the Cortex-M33 entry with a specific board.
+// CPUID PartNo → Renesas vendor / family-GROUP hint shown in the UI.
+// CPUID alone only narrows the device to a core (hence a group of RA series); it
+// cannot pick the exact MCU group or board. Later phases (J-Link OB firmware
+// token, on-chip memory probing) refine this to a specific group/board via
+// RA_CATALOG. Non-Renesas cores show the core name only.
 const CPUID_VENDOR_HINTS = {
-  0xD23: { vendor: 'Renesas', family: 'RA8M1 / RA8D1 / RA8T1 series',
-           board: 'EK-RA8M1', partNumber: 'R7FA8M1AHECBD' },
-  0xD21: { vendor: 'Renesas', family: 'RA4M2 · RA6M4 · RA6M5 · RA6E1 series',
-           board: null,        partNumber: null              },
-  0xD20: { vendor: 'Renesas', family: 'RA2A1 · RA2L1 · RA2E1 series',
-           board: null,        partNumber: null              },
-  0xC24: { vendor: 'Renesas', family: 'RA4M1 · RA6M1 · RA6M2 · RA6M3 series',
-           board: null,        partNumber: null              },
+  // Arm Cortex-M85 (ARMv8.1-M) — RA8 series
+  0xD23: { vendor: 'Renesas', family: 'RA8 series (Cortex-M85)',
+           board: null, partNumber: null },
+  // Arm Cortex-M55 (ARMv8.1-M)
+  0xD22: { vendor: 'Renesas', family: 'RA series (Cortex-M55)',
+           board: null, partNumber: null },
+  // Arm Cortex-M33 (ARMv8-M.Main) — RA4 / RA6 / RA-T (motor) groups
+  0xD21: { vendor: 'Renesas', family: 'RA4 · RA6 · RA-T series (Cortex-M33)',
+           board: null, partNumber: null },
+  // Arm Cortex-M23 (ARMv8-M.Baseline) — RA0 / RA2 groups
+  0xD20: { vendor: 'Renesas', family: 'RA0 · RA2 series (Cortex-M23)',
+           board: null, partNumber: null },
+  // Arm Cortex-M4 (ARMv7E-M) — original RA4 / RA6 groups
+  0xC24: { vendor: 'Renesas', family: 'RA4 · RA6 series (Cortex-M4)',
+           board: null, partNumber: null },
 };
 
 // Decode ARM CPUID register (0xE000ED00)
@@ -400,13 +409,156 @@ function runJLinkStdin(iface, speed, cmds, timeoutMs = 15000) {
   });
 }
 
-// Renesas RA Cortex-M33 device table — used by identifyRenesasRA below.
-const RENESAS_RA_CM33 = [
-  { board: 'EK-RA6M5', partNumber: 'R7FA6M5BH3CFP', family: 'RA6M5', flashKB: 2048, ramKB: 512, vendor: 'Renesas' },
-  { board: 'EK-RA6M4', partNumber: 'R7FA6M4AF3CFP', family: 'RA6M4', flashKB: 1024, ramKB: 256, vendor: 'Renesas' },
-  { board: 'EK-RA4M2', partNumber: 'R7FA4M2AD3CFP', family: 'RA4M2', flashKB: 1024, ramKB: 128, vendor: 'Renesas' },
-  { board: 'EK-RA6E1', partNumber: 'R7FA6E1AD3CFP', family: 'RA6E1', flashKB: 512,  ramKB: 128, vendor: 'Renesas' },
+// ── Comprehensive Renesas RA board / MCU catalog ────────────────────────────
+//
+// One entry per MCU group. `boards` lists every Renesas development board built
+// on that group; the FIRST board is the primary one — its example_projects
+// folder on github.com/renesas/ra-fsp-examples is guaranteed to exist, so FSP
+// example browsing works for it. Additional boards (EK / FPB / CK / MCK / RSSK
+// variants of the same silicon) are surfaced in the UI so the user can switch.
+//
+// Detection resolves a `group` from, in order of specificity:
+//   1. the J-Link OB firmware token  (e.g. "J-Link OB-RA6E1" → RA6E1) — exact,
+//   2. on-chip memory probing        (flash/SRAM size → group),
+//   3. the CPUID family group        (core only → broad RA series).
+// then surfaces the primary board for that group plus any alternates.
+//
+// flashKB / ramKB are the group maximums; null where not authoritatively known
+// (the UI simply omits unknown fields rather than display a guess).
+const RA_CATALOG = [
+  // ── RA0 — ultra-low-power · Arm Cortex-M23 ─────────────────────────────────
+  { group: 'RA0E1', core: 'Cortex-M23', flashKB:   64, ramKB:  12, part: null,            boards: ['FPB-RA0E1'] },
+  { group: 'RA0E2', core: 'Cortex-M23', flashKB: null, ramKB: null, part: null,           boards: ['FPB-RA0E2'] },
+  { group: 'RA0E3', core: 'Cortex-M23', flashKB: null, ramKB: null, part: null,           boards: ['FPB-RA0E3'] },
+  { group: 'RA0L1', core: 'Cortex-M23', flashKB:   64, ramKB:  16, part: null,            boards: ['FPB-RA0L1'] },
+
+  // ── RA2 — entry-level general purpose · Arm Cortex-M23 ─────────────────────
+  { group: 'RA2A1', core: 'Cortex-M23', flashKB:  256, ramKB:  32, part: 'R7FA2A1AB3CFP', boards: ['EK-RA2A1'] },
+  { group: 'RA2A2', core: 'Cortex-M23', flashKB:  512, ramKB:  64, part: null,            boards: ['EK-RA2A2'] },
+  { group: 'RA2E1', core: 'Cortex-M23', flashKB:  128, ramKB:  16, part: 'R7FA2E1A93CFM', boards: ['EK-RA2E1'] },
+  { group: 'RA2E2', core: 'Cortex-M23', flashKB:   64, ramKB:  16, part: 'R7FA2E2A7DFM',  boards: ['EK-RA2E2'] },
+  { group: 'RA2E3', core: 'Cortex-M23', flashKB:   64, ramKB:  16, part: null,            boards: ['FPB-RA2E3'] },
+  { group: 'RA2L1', core: 'Cortex-M23', flashKB:  256, ramKB:  32, part: 'R7FA2L1AB2DFP', boards: ['EK-RA2L1'] },
+  { group: 'RA2L2', core: 'Cortex-M23', flashKB:  128, ramKB:  16, part: null,            boards: ['EK-RA2L2'] },
+  { group: 'RA2T1', core: 'Cortex-M23', flashKB: null, ramKB: null, part: null,           boards: ['FPB-RA2T1'] },
+
+  // ── RA4 / RA6 (original) · Arm Cortex-M4 ───────────────────────────────────
+  { group: 'RA4M1', core: 'Cortex-M4',  flashKB:  256, ramKB:  32, part: 'R7FA4M1AB3CFP', boards: ['EK-RA4M1'] },
+  { group: 'RA4W1', core: 'Cortex-M4',  flashKB:  512, ramKB:  96, part: 'R7FA4W1BB2CLG', boards: ['EK-RA4W1'] },
+  { group: 'RA6M1', core: 'Cortex-M4',  flashKB:  512, ramKB: 256, part: 'R7FA6M1AD3CFP', boards: ['EK-RA6M1'] },
+  { group: 'RA6M2', core: 'Cortex-M4',  flashKB: 1024, ramKB: 384, part: 'R7FA6M2AF3CFP', boards: ['EK-RA6M2'] },
+  { group: 'RA6M3', core: 'Cortex-M4',  flashKB: 2048, ramKB: 640, part: 'R7FA6M3AH3CFP', boards: ['EK-RA6M3', 'EK-RA6M3G'] },
+  { group: 'RA6T1', core: 'Cortex-M4',  flashKB:  512, ramKB:  64, part: 'R7FA6T1AD3CFP', boards: ['RSSK-RA6T1'] },
+
+  // ── RA4 / RA6 (TrustZone) · Arm Cortex-M33 ─────────────────────────────────
+  { group: 'RA4M2', core: 'Cortex-M33', flashKB:  512, ramKB: 128, part: 'R7FA4M2AD3CFP', boards: ['EK-RA4M2'] },
+  { group: 'RA4M3', core: 'Cortex-M33', flashKB: 1024, ramKB: 256, part: 'R7FA4M3AF3CFP', boards: ['EK-RA4M3'] },
+  { group: 'RA4E1', core: 'Cortex-M33', flashKB:  512, ramKB: 128, part: 'R7FA4E10D2CFM', boards: ['FPB-RA4E1'] },
+  { group: 'RA4E2', core: 'Cortex-M33', flashKB:  128, ramKB:  40, part: 'R7FA4E2B93CFM', boards: ['EK-RA4E2', 'FPB-RA4E2'] },
+  { group: 'RA4C1', core: 'Cortex-M33', flashKB: null, ramKB: null, part: null,           boards: ['EK-RA4C1'] },
+  { group: 'RA4L1', core: 'Cortex-M33', flashKB:  512, ramKB: null, part: null,           boards: ['EK-RA4L1'] },
+  { group: 'RA4T1', core: 'Cortex-M33', flashKB: null, ramKB: null, part: null,           boards: ['FPB-RA4T1', 'MCK-RA4T1'] },
+  { group: 'RA6M4', core: 'Cortex-M33', flashKB: 1024, ramKB: 256, part: 'R7FA6M4AF3CFP', boards: ['EK-RA6M4'] },
+  { group: 'RA6M5', core: 'Cortex-M33', flashKB: 2048, ramKB: 512, part: 'R7FA6M5BH3CFP', boards: ['EK-RA6M5', 'CK-RA6M5'] },
+  { group: 'RA6E1', core: 'Cortex-M33', flashKB:  512, ramKB: 256, part: 'R7FA6E10F2CFP', boards: ['FPB-RA6E1'] },
+  { group: 'RA6E2', core: 'Cortex-M33', flashKB:  256, ramKB:  40, part: 'R7FA6E2BB3CFM', boards: ['EK-RA6E2', 'FPB-RA6E2'] },
+  { group: 'RA6T2', core: 'Cortex-M33', flashKB:  256, ramKB: null, part: null,           boards: ['MCK-RA6T2'] },
+  { group: 'RA6T3', core: 'Cortex-M33', flashKB: null, ramKB: null, part: null,           boards: ['FPB-RA6T3', 'MCK-RA6T3'] },
+
+  // ── RA8 — highest performance · Arm Cortex-M85 (some dual-core +M33) ────────
+  { group: 'RA8M1', core: 'Cortex-M85', flashKB: 2048, ramKB:1024, part: 'R7FA8M1AHECBD', boards: ['EK-RA8M1'] },
+  { group: 'RA8D1', core: 'Cortex-M85', flashKB: 2048, ramKB:1024, part: 'R7FA8D1BHECBD', boards: ['EK-RA8D1'] },
+  { group: 'RA8T1', core: 'Cortex-M85', flashKB: 1024, ramKB: 512, part: 'R7FA8T1AHECBD', boards: ['MCK-RA8T1'] },
+  { group: 'RA8E1', core: 'Cortex-M85', flashKB: 1024, ramKB: 544, part: null,            boards: ['FPB-RA8E1'] },
+  { group: 'RA8E2', core: 'Cortex-M85', flashKB: 1024, ramKB: 672, part: null,            boards: ['EK-RA8E2'] },
+  { group: 'RA8M2', core: 'Cortex-M85', flashKB: 1024, ramKB:2048, part: null,            boards: ['EK-RA8M2'] },
+  { group: 'RA8D2', core: 'Cortex-M85', flashKB: 1024, ramKB:2048, part: null,            boards: ['EK-RA8D2'] },
+  { group: 'RA8P1', core: 'Cortex-M85', flashKB: 1024, ramKB:2048, part: null,            boards: ['EK-RA8P1'] },
+  { group: 'RA8T2', core: 'Cortex-M85', flashKB: null, ramKB: null, part: null,           boards: ['EK-RA8T2', 'MCK-RA8T2'] },
 ];
+
+// Fast lookup: MCU group name (upper-case, e.g. "RA6E1") → catalog entry.
+const RA_GROUP_INDEX = new Map(RA_CATALOG.map(e => [e.group, e]));
+function catalogGroup(group) {
+  return group ? (RA_GROUP_INDEX.get(String(group).toUpperCase()) || null) : null;
+}
+
+// Build the vendorHint object the UI consumes from a catalog entry.
+// `preferBoard` (optional) chooses which of the group's boards is primary.
+function hintFromGroup(group, preferBoard) {
+  const e = catalogGroup(group);
+  if (!e) return null;
+  const board = (preferBoard && e.boards.includes(preferBoard)) ? preferBoard : e.boards[0];
+  return {
+    vendor:     'Renesas',
+    family:     `${e.group} series`,
+    board,
+    partNumber: e.part || null,
+    core:       e.core,
+    flashKB:    e.flashKB,
+    ramKB:      e.ramKB,
+    boards:     e.boards.slice(),   // all variants on this silicon, for the UI
+  };
+}
+
+// Merge a catalog vendorHint into a parsed-info object (mutates `info`).
+// Known flash/RAM/core fields override only when the hint actually provides them.
+function applyHint(info, hint) {
+  if (!info || !hint) return;
+  info.vendorHint = {
+    vendor:      hint.vendor,
+    family:      hint.family,
+    board:       hint.board,
+    partNumber:  hint.partNumber,
+    boards:      hint.boards,
+    approximate: hint.approximate || false,   // true = core known, exact board guessed
+  };
+  if (hint.flashKB != null) info.flashKB = hint.flashKB;
+  if (hint.ramKB   != null) info.ramKB   = hint.ramKB;
+  if (!info.core && hint.core) info.core = hint.core;
+}
+
+// True if a CPUID-decoded core is consistent with a catalog entry's core.
+// Loose on both sides so dual-core ("Cortex-M85 + Cortex-M33") entries match a
+// single detected core, and "Cortex-M3/M4"-style hints match either member.
+function coreCompatible(detected, catalogCore) {
+  if (!detected || !catalogCore) return true;
+  const a = String(detected), b = String(catalogCore);
+  return a.includes(b) || b.includes(a)
+      || a.split(/[\/+]/).some(t => b.includes(t.trim()))
+      || b.split(/[\/+]/).some(t => a.includes(t.trim()));
+}
+
+// When the core is known but the exact MCU group isn't — e.g. an external probe
+// whose OB firmware names a different board, or a series with no size-probe path
+// (RA8/RA2) — fall back to the core. Surfaces a representative board plus EVERY
+// board on matching silicon, so the user can pick theirs via the UI's variant
+// chips. Marked `approximate` so the UI presents it as a best guess.
+const CORE_DEFAULT_GROUP = {
+  'Cortex-M85': 'RA8M1',
+  'Cortex-M33': 'RA6M5',
+  'Cortex-M4':  'RA6M3',
+  'Cortex-M23': 'RA2E1',
+};
+function coreFallbackHint(core) {
+  if (!core) return null;
+  const boards = [];
+  for (const e of RA_CATALOG) if (coreCompatible(core, e.core)) boards.push(...e.boards);
+  if (!boards.length) return null;
+  const def = catalogGroup(CORE_DEFAULT_GROUP[core]);
+  const primary = (def && coreCompatible(core, def.core)) ? def.boards[0] : boards[0];
+  return {
+    vendor:      'Renesas',
+    family:      `RA family · ${core}`,
+    board:       primary,
+    partNumber:  null,
+    core,
+    flashKB:     null,
+    ramKB:       null,
+    boards,
+    approximate: true,
+  };
+}
 
 // Identify Renesas RA Cortex-M33 boards via SRAM write-back test.
 //
@@ -427,7 +579,7 @@ const RENESAS_RA_CM33 = [
 //   0x00080000 read present     → flash ≥ 512KB+1 →  1 MB  → RA4M2 (best-effort)
 //   default                     → 512 KB flash, 128 KB RAM  → RA6E1
 async function identifyRenesasRA(iface, speed) {
-  const find = f => RENESAS_RA_CM33.find(r => r.family === f) || null;
+  const find = hintFromGroup;   // group name → catalog vendorHint
 
   // Single J-Link session: write two markers, read back both
   let out;
@@ -461,14 +613,6 @@ async function identifyRenesasRA(iface, speed) {
   return find('RA6E1');
 }
 
-// Renesas RA Cortex-M4 device table — used by identifyRenesasRACM4 below.
-const RENESAS_RA_CM4 = [
-  { board: 'EK-RA6M3', partNumber: 'R7FA6M3AH3CFP', family: 'RA6M3', flashKB: 2048, ramKB: 640, vendor: 'Renesas' },
-  { board: 'EK-RA6M2', partNumber: 'R7FA6M2AF3CFP', family: 'RA6M2', flashKB: 1024, ramKB: 384, vendor: 'Renesas' },
-  { board: 'EK-RA6M1', partNumber: 'R7FA6M1AD3CFP', family: 'RA6M1', flashKB:  512, ramKB: 256, vendor: 'Renesas' },
-  { board: 'EK-RA4M1', partNumber: 'R7FA4M1AB3CFP', family: 'RA4M1', flashKB:  256, ramKB: 128, vendor: 'Renesas' },
-];
-
 // Identify Renesas RA Cortex-M4 boards via flash boundary probing.
 //
 // Decision tree (max 3 probes):
@@ -486,7 +630,7 @@ async function identifyRenesasRACM4(iface, speed) {
     } catch { return false; }
   }
 
-  const find = f => RENESAS_RA_CM4.find(r => r.family === f) || null;
+  const find = hintFromGroup;   // group name → catalog vendorHint
 
   if (await probe(0x00100000)) return find('RA6M3');   // 2 MB Flash
   if (await probe(0x00080000)) return find('RA6M2');   // 1 MB Flash
@@ -499,53 +643,89 @@ async function identifyRenesasRACM4(iface, speed) {
 // included because J-Link uses device-specific SWD/reset sequences that can
 // succeed even when the generic Cortex-M name fails.
 const SWD_GENERIC_FALLBACK = [
-  // Generic cores first (fast to try, work for most unlocked devices)
-  'Cortex-M33', 'Cortex-M4', 'Cortex-M7', 'Cortex-M85',
-  'Cortex-M0+', 'Cortex-M23', 'Cortex-M55', 'Cortex-M3', 'Cortex-M0',
+  // Generic cores first (fast to try, work for most unlocked devices) — these
+  // already cover every Renesas RA part regardless of group.
+  'Cortex-M33', 'Cortex-M4', 'Cortex-M85', 'Cortex-M23',
+  'Cortex-M0+', 'Cortex-M55', 'Cortex-M7', 'Cortex-M3', 'Cortex-M0',
   // Renesas RA specific part numbers — J-Link knows device-specific
-  // connect-under-reset timing and SWD init for these
-  'R7FA8M1AHECBD',  // RA8M1
-  'R7FA6M5BH3CFP',  // RA6M5 LQFP100
-  'R7FA6M5BF2CBG',  // RA6M5 BGA100
-  'R7FA6M4AF3CFP',  // RA6M4
-  'R7FA6E1AD3CFP',  // RA6E1
-  'R7FA4M2AD3CFP',  // RA4M2
-  'R7FA4M1AB3CFP',  // RA4M1
-  'R7FA2L1AB2DFP',  // RA2L1
+  // connect-under-reset timing and SWD init for these, spanning the lineup.
+  'R7FA8M1AHECBD',  // RA8 · Cortex-M85
+  'R7FA8D1BHECBD',  // RA8D1 · Cortex-M85 (graphics)
+  'R7FA8E1AFDCFB',  // RA8E1 · Cortex-M85 (entry)
+  'R7FA6M5BH3CFP',  // RA6M5 · Cortex-M33
+  'R7FA6M4AF3CFP',  // RA6M4 · Cortex-M33
+  'R7FA6E10F2CFP',  // RA6E1 · Cortex-M33 (FPB)
+  'R7FA4M3AF3CFP',  // RA4M3 · Cortex-M33
+  'R7FA4M2AD3CFP',  // RA4M2 · Cortex-M33
+  'R7FA4E10D2CFM',  // RA4E1 · Cortex-M33 (FPB)
+  'R7FA6M3AH3CFP',  // RA6M3 · Cortex-M4
+  'R7FA4M1AB3CFP',  // RA4M1 · Cortex-M4
+  'R7FA2L1AB2DFP',  // RA2L1 · Cortex-M23
+  'R7FA2E1A93CFM',  // RA2E1 · Cortex-M23
 ];
 
-// J-Link On-Board probe firmware → Renesas board mapping.
-// The J-Link OB firmware string always contains the target MCU name, e.g.:
-//   "Firmware: J-Link OB-RA4M2-CortexM compiled …"
-// This lets us identify the board even when the CPU is unreachable via SWD/JTAG
-// (e.g. debug-protection enabled, boot failure, or connection issue).
-const JLINK_OB_MAP = {
-  'RA2A1': { board: 'EK-RA2A1', partNumber: 'R7FA2A1AB3CFP', family: 'RA2A1', core: 'Cortex-M23', flashKB:  256, ramKB:  32, vendor: 'Renesas' },
-  'RA2E1': { board: 'EK-RA2E1', partNumber: 'R7FA2E1A9DFM',  family: 'RA2E1', core: 'Cortex-M23', flashKB:  128, ramKB:  16, vendor: 'Renesas' },
-  'RA2E2': { board: 'EK-RA2E2', partNumber: 'R7FA2E2A7DFM',  family: 'RA2E2', core: 'Cortex-M23', flashKB:   64, ramKB:  16, vendor: 'Renesas' },
-  'RA2L1': { board: 'EK-RA2L1', partNumber: 'R7FA2L1AB2DFP', family: 'RA2L1', core: 'Cortex-M23', flashKB:  256, ramKB:  32, vendor: 'Renesas' },
-  'RA4M1': { board: 'EK-RA4M1', partNumber: 'R7FA4M1AB3CFP', family: 'RA4M1', core: 'Cortex-M4',  flashKB:  256, ramKB: 128, vendor: 'Renesas' },
-  'RA4M2': { board: 'EK-RA4M2', partNumber: 'R7FA4M2AD3CFP', family: 'RA4M2', core: 'Cortex-M33', flashKB: 1024, ramKB: 128, vendor: 'Renesas' },
-  'RA4M3': { board: 'EK-RA4M3', partNumber: 'R7FA4M3AF3CFP', family: 'RA4M3', core: 'Cortex-M33', flashKB: 1024, ramKB: 256, vendor: 'Renesas' },
-  'RA4W1': { board: 'EK-RA4W1', partNumber: 'R7FA4W1BB2CLG', family: 'RA4W1', core: 'Cortex-M4',  flashKB:  512, ramKB:  96, vendor: 'Renesas' },
-  'RA4E1': { board: 'EK-RA4E1', partNumber: 'R7FA4E1AD3CFM', family: 'RA4E1', core: 'Cortex-M33', flashKB:  512, ramKB: 128, vendor: 'Renesas' },
-  'RA4E2': { board: 'EK-RA4E2', partNumber: 'R7FA4E2AD3CFM', family: 'RA4E2', core: 'Cortex-M33', flashKB:  256, ramKB:  64, vendor: 'Renesas' },
-  'RA6M1': { board: 'EK-RA6M1', partNumber: 'R7FA6M1AD3CFP', family: 'RA6M1', core: 'Cortex-M4',  flashKB:  512, ramKB: 128, vendor: 'Renesas' },
-  'RA6M2': { board: 'EK-RA6M2', partNumber: 'R7FA6M2AF3CFP', family: 'RA6M2', core: 'Cortex-M4',  flashKB: 1024, ramKB: 384, vendor: 'Renesas' },
-  'RA6M3': { board: 'EK-RA6M3', partNumber: 'R7FA6M3AH3CFP', family: 'RA6M3', core: 'Cortex-M4',  flashKB: 2048, ramKB: 640, vendor: 'Renesas' },
-  'RA6M4': { board: 'EK-RA6M4', partNumber: 'R7FA6M4AF3CFP', family: 'RA6M4', core: 'Cortex-M33', flashKB: 1024, ramKB: 256, vendor: 'Renesas' },
-  'RA6M5': { board: 'EK-RA6M5', partNumber: 'R7FA6M5BH3CFP', family: 'RA6M5', core: 'Cortex-M33', flashKB: 2048, ramKB: 512, vendor: 'Renesas' },
-  'RA6E1': { board: 'EK-RA6E1', partNumber: 'R7FA6E1AD3CFP', family: 'RA6E1', core: 'Cortex-M33', flashKB:  512, ramKB: 128, vendor: 'Renesas' },
-  'RA6E2': { board: 'EK-RA6E2', partNumber: 'R7FA6E2AD3CFM', family: 'RA6E2', core: 'Cortex-M33', flashKB:  256, ramKB:  64, vendor: 'Renesas' },
-  'RA8M1': { board: 'EK-RA8M1', partNumber: 'R7FA8M1AHECBD', family: 'RA8M1', core: 'Cortex-M85', flashKB: 2048, ramKB:1024, vendor: 'Renesas' },
-  'RA8D1': { board: 'EK-RA8D1', partNumber: 'R7FA8D1BHECBD', family: 'RA8D1', core: 'Cortex-M85', flashKB: 2048, ramKB:1024, vendor: 'Renesas' },
-  'RA8T1': { board: 'EK-RA8T1', partNumber: 'R7FA8T1AHECBD', family: 'RA8T1', core: 'Cortex-M85', flashKB: 1024, ramKB: 512, vendor: 'Renesas' },
-};
+// Extract the MCU group token from a J-Link On-Board firmware banner, e.g.
+//   "Firmware: J-Link OB-RA4M2-CortexM compiled …"          → "RA4M2"
+//   "Firmware: J-Link OB-S124-Renesas compiled …"           → "S124" (ignored)
+// Returns the upper-case token, or null if the banner isn't present.
+function parseOBToken(rawOutput) {
+  const m = (rawOutput || '').match(/Firmware:\s+J-Link\s+OB-([A-Za-z0-9]+)/i);
+  return m ? m[1].toUpperCase() : null;
+}
 
+// J-Link On-Board probe firmware → Renesas board, resolved through RA_CATALOG.
+// The J-Link OB firmware banner names the target MCU group, e.g.
+//   "Firmware: J-Link OB-RA4M2-CortexM compiled …"  →  RA4M2  →  EK-RA4M2.
+// This identifies the board even when the CPU itself is unreachable over SWD/JTAG
+// (debug protection enabled, boot/fault loop, or a wiring/power issue). Covers
+// the entire RA lineup automatically since it reuses the catalog.
 function detectJLinkOBBoard(rawOutput) {
-  const m = rawOutput.match(/Firmware:\s+J-Link\s+OB-([A-Za-z0-9]+)/i);
-  if (!m) return null;
-  return JLINK_OB_MAP[m[1].toUpperCase()] || null;
+  return hintFromGroup(parseOBToken(rawOutput));
+}
+
+// Read the MCU's factory-programmed Part Number (PNR) straight from silicon — the
+// most authoritative ID, independent of the probe's OB firmware. The 16-byte
+// ASCII string (e.g. "R7FA8M1AHECBD") lives at a family-specific factory-flash
+// address; we read all candidates in the connect session (see the mem8 reads in
+// /api/auto-identify) and parse whichever line returns an "R7FA…" string.
+//   RA8 series                       → 0x030080F0
+//   RA4M2/M3 · RA6M4/M5 · RA4E · RA6E → 0x010080F0
+//   RA0 · RA2 entry                  → 0x01001C10
+// J-Link prints e.g.:  030080F0 = 52 37 46 41 38 4D 31 41 48 45 43 42 44 20 20 20
+const PNR_ADDRESSES = ['030080F0', '010080F0', '01001C10'];
+function parsePartNumber(output) {
+  for (const addr of PNR_ADDRESSES) {
+    const m = output.match(new RegExp(addr + '\\s*=\\s*((?:[0-9A-Fa-f]{2}\\s+){8,})', 'i'));
+    if (!m) continue;
+    const ascii = m[1].trim().split(/\s+/)
+      .map(h => String.fromCharCode(parseInt(h, 16))).join('');
+    const pm = ascii.match(/R7FA([0-9][A-Z][0-9])([A-Z0-9]*)/);
+    if (pm) return { group: 'RA' + pm[1], partNumber: 'R7FA' + pm[1] + pm[2] };
+  }
+  return null;
+}
+
+// Resolve the exact board for a connected target, mutating `info`. Tries signals
+// in order of authority and stops at the first that matches the detected core:
+//   1. on-silicon Part Number  (exact MCU group + orderable part number)
+//   2. J-Link OB firmware token (exact group, but reflects the PROBE)
+//   3. on-chip memory-size probe (M33 / M4 groups)
+// If all fail, the caller applies the core-level fallback as a last resort.
+async function resolveBoard(info, raw, iface, speed) {
+  // 1. Part Number read from factory flash — definitive.
+  const pn = parsePartNumber(raw);
+  const pnHint = pn && hintFromGroup(pn.group);
+  if (pnHint && coreCompatible(info.core, pnHint.core)) {
+    applyHint(info, pnHint);
+    if (pn.partNumber) info.vendorHint.partNumber = pn.partNumber;   // exact orderable part
+    return;
+  }
+  // 2. J-Link OB firmware token.
+  const obHint = hintFromGroup(parseOBToken(raw));
+  if (obHint && coreCompatible(info.core, obHint.core)) { applyHint(info, obHint); return; }
+  // 3. On-chip memory-size probe.
+  if (info.core === 'Cortex-M33')      applyHint(info, await identifyRenesasRA(iface, speed));
+  else if (info.core === 'Cortex-M4')  applyHint(info, await identifyRenesasRACM4(iface, speed));
 }
 
 // REST: auto-identify target — two-phase approach
@@ -596,7 +776,10 @@ app.post('/api/auto-identify', async (req, res) => {
       for (const device of devicesToTry) {
         const entry = { interface: iface, connected: false, info: {}, raw: '', usedDevice: device };
         try {
-          const cmds   = ['connect', device, 'mem32 0xE000ED00 1', 'exit'];
+          // Read CPUID + the factory-flash Part Number (all candidate addresses)
+          // in one connect session — the PNR gives the exact device at no extra cost.
+          const cmds   = ['connect', device, 'mem32 0xE000ED00 1',
+                          'mem8 0x030080F0 16', 'mem8 0x010080F0 16', 'mem8 0x01001C10 16', 'exit'];
           const output = await runJLinkStdin(iface, 4000, cmds, 15000);
           const info2  = parseJLinkOutput(output);
 
@@ -607,34 +790,8 @@ app.post('/api/auto-identify', async (req, res) => {
           entry.connected = !failed && !!(info2.cpuidRaw || info2.core);
           entry.raw       = `[Phase 1a – JTAG scan]\n${phase1Raw}\n\n[Phase 2 – ${iface} as "${device}"]\n${output}`;
 
-          // Phase 3 — Renesas RA Cortex-M33 deep identification
-          if (entry.connected && entry.info.core === 'Cortex-M33') {
-            const ra = await identifyRenesasRA(iface, 4000);
-            if (ra) {
-              entry.info.vendorHint = {
-                vendor:     ra.vendor,
-                family:     `${ra.family} series`,
-                board:      ra.board,
-                partNumber: ra.partNumber,
-              };
-              entry.info.flashKB = ra.flashKB;
-              entry.info.ramKB   = ra.ramKB;
-            }
-          }
-
-          // Phase 3 — Renesas RA Cortex-M4 deep identification
-          if (entry.connected && entry.info.core === 'Cortex-M4') {
-            const ra = await identifyRenesasRACM4(iface, 4000);
-            if (ra) {
-              entry.info.vendorHint = {
-                vendor:     ra.vendor,
-                family:     `${ra.family} series`,
-                board:      ra.board,
-                partNumber: ra.partNumber,
-              };
-              entry.info.flashKB = ra.flashKB;
-              entry.info.ramKB   = ra.ramKB;
-            }
+          if (entry.connected) {
+            await resolveBoard(entry.info, `${phase1Raw}\n${phase1SwdRaw}\n${output}`, iface, 4000);
           }
         } catch (err) {
           entry.raw = err.message;
@@ -657,7 +814,8 @@ app.post('/api/auto-identify', async (req, res) => {
       for (const device of SWD_GENERIC_FALLBACK) {
         const entry = { interface: 'SWD', connected: false, info: {}, raw: '', usedDevice: device };
         try {
-          const cmds   = ['connect', device, 'mem32 0xE000ED00 1', 'exit'];
+          const cmds   = ['connect', device, 'mem32 0xE000ED00 1',
+                          'mem8 0x030080F0 16', 'mem8 0x010080F0 16', 'mem8 0x01001C10 16', 'exit'];
           const output = await runJLinkStdin('SWD', speed, cmds, 15000);
           const info2  = parseJLinkOutput(output);
 
@@ -666,6 +824,10 @@ app.post('/api/auto-identify', async (req, res) => {
           const failed    = /Could not connect|Cannot connect|Error while|Failed to|not supported/i.test(output) && !info2.cpuidRaw;
           entry.connected = !failed && !!(info2.cpuidRaw || info2.core);
           entry.raw       = `${combinedPhase1}\n\n${lastAttemptRaw}`;
+
+          if (entry.connected) {
+            await resolveBoard(entry.info, `${combinedPhase1}\n${output}`, 'SWD', speed);
+          }
         } catch (err) {
           lastAttemptRaw = `[SWD fallback: "${device}" @ ${speed} kHz]\n${err.message}`;
           entry.raw       = `${combinedPhase1}\n\n${lastAttemptRaw}`;
@@ -696,6 +858,16 @@ app.post('/api/auto-identify', async (req, res) => {
 
   if (!results.length) {
     results.push({ interface: 'JTAG scan', connected: false, info: scanInfo, raw: phase1Raw });
+  }
+
+  // Final fallback: a connected target whose exact board we couldn't pin (no OB
+  // match, no size-probe path) still resolves to its core's board list, so the
+  // FSP examples / e2 studio panel always appears and the user can pick the board.
+  for (const entry of results) {
+    if (entry.connected && entry.info && entry.info.core
+        && (!entry.info.vendorHint || !entry.info.vendorHint.board)) {
+      applyHint(entry.info, coreFallbackHint(entry.info.core));
+    }
   }
 
   res.json({ results });

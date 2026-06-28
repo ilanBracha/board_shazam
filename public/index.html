@@ -428,7 +428,7 @@ const SCAN_PHASES = [
   'Matching device database…',
   'Finalizing identification…',
 ];
-const SCAN_MIN_MS = 5200;   // enforced minimum scan duration (for drama)
+const SCAN_MIN_MS = 1400;   // enforced minimum scan duration (keeps the meter from flashing past)
 
 // e2 studio launch phases (download → import → launch)
 const E2_PHASES = [
@@ -526,7 +526,7 @@ let ws = null;
 function wsConnect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
-  ws.onclose = () => { ws = null; if (state.sessionActive) setSessionActive(false); };
+  ws.onclose = () => { ws = null; const wasActive = state.sessionActive; if (wasActive) setSessionActive(false); if (wasActive) maybeSessionDropped(); };
   ws.onerror = () => termWrite('\n[WebSocket error]\n', 'var(--term-error)');
   ws.onmessage = (evt) => {
     let msg; try { msg = JSON.parse(evt.data); } catch { return; }
@@ -536,7 +536,11 @@ function wsConnect() {
                 : msg.type === 'info'   ? 'var(--term-info)'
                 : 'var(--term-fg)';
     termWrite(msg.data, color);
-    if (msg.type === 'exit') setSessionActive(false);
+    if (msg.type === 'exit') {
+      const wasActive = state.sessionActive;
+      setSessionActive(false);
+      if (wasActive) maybeSessionDropped();
+    }
   };
 }
 
@@ -554,8 +558,10 @@ function startSession() {
   send();
 }
 function stopSession() {
+  userStopping = true;   // suppress the disconnect prompt for the trailing exit/close
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
   setSessionActive(false);
+  setTimeout(() => { userStopping = false; }, 1500);
 }
 function setSessionActive(active) {
   state.sessionActive = active;
@@ -619,6 +625,97 @@ function dismissHero() {
   heroTimer = setTimeout(() => $('hero').classList.add('hidden'), 650);
 }
 
+// Return to the hero / scan landing page (reverse of dismissHero).
+function showHero() {
+  state.mode = 'hero';
+  clearTimeout(heroTimer);
+  const h = $('hero');
+  h.classList.remove('hidden');
+  void h.offsetWidth;            // reflow so the slide-in transition replays
+  h.classList.remove('hero-hidden');
+  $('heroError').classList.add('hidden');
+  $('heroProgress').classList.add('hidden');
+}
+
+// ── Board-presence watchdog ─────────────────────────────────
+// Once a board is identified, poll tightly for the probe; if it vanishes
+// (unplugged), prompt the user. Paused while scanning or during an interactive
+// J-Link session so we never contend for the probe — a mid-session unplug is
+// caught instantly instead, when the J-Link process drops (see maybeSessionDropped).
+let probeWatch = null, probeChecking = false, disconnectShown = false, userStopping = false;
+function startProbeWatch() {
+  stopProbeWatch();
+  probeWatch = setInterval(checkProbePresence, 1500);   // tight poll → fast detection
+}
+function stopProbeWatch() {
+  if (probeWatch) { clearInterval(probeWatch); probeWatch = null; }
+}
+async function probeCount() {
+  try {
+    const res = await fetch('/api/scan-probes');
+    const data = await res.json();
+    return Array.isArray(data.probes) ? data.probes.length : 0;
+  } catch { return -1; }   // -1 = couldn't tell (network/server hiccup) → ignore
+}
+async function checkProbePresence() {
+  if (scanning || state.sessionActive || probeChecking || disconnectShown) return;
+  probeChecking = true;
+  try {
+    let n = await probeCount();
+    if (n !== 0) return;            // present, or unknown — leave it
+    n = await probeCount();         // immediate re-read to reject a transient miss
+    if (n === 0) onBoardDisconnected(false);
+  } finally { probeChecking = false; }
+}
+function onBoardDisconnected(sessionDropped) {
+  if (disconnectShown) return;
+  stopProbeWatch();
+  if (ws) { try { stopSession(); } catch (e) {} }
+  setProbeBadge('Board Disconnected', false);
+  termWrite('\n[Board disconnected' + (sessionDropped ? ' — J-Link session dropped' : '') + ']\n', 'var(--term-error)');
+  showDisconnectDialog(sessionDropped);
+}
+
+// Catch an unplug DURING an interactive session: the J-Link process drops, which
+// closes the WS / emits 'exit'. Confirm the probe is really gone (not a normal
+// user stop or a script-driven exit) before alerting.
+function maybeSessionDropped() {
+  if (userStopping || disconnectShown) return;
+  setTimeout(async () => {
+    if (state.sessionActive || scanning || disconnectShown) return;
+    if (await probeCount() === 0) onBoardDisconnected(true);
+  }, 300);   // let the probe be released before querying it
+}
+
+// Modal: explain the disconnect and offer to dismiss or return to the scan page.
+function showDisconnectDialog(sessionDropped) {
+  if (document.getElementById('disconnectBackdrop')) return;
+  disconnectShown = true;
+  const back = document.createElement('div');
+  back.id = 'disconnectBackdrop';
+  back.style.cssText = 'position:fixed; inset:0; z-index:110; background:rgba(20,20,30,0.55); display:flex; align-items:center; justify-content:center; padding:24px;';
+  back.innerHTML = `
+    <div role="alertdialog" aria-modal="true" style="width:min(440px,92vw); background:var(--panel); border:1px solid var(--line); border-top:3px solid var(--danger); border-radius:4px; box-shadow:var(--shadow-pop); padding:24px;">
+      <div style="display:flex; align-items:center; gap:11px; margin-bottom:13px;">
+        <div style="flex-shrink:0; width:38px; height:38px; border-radius:50%; background:var(--danger-soft); display:flex; align-items:center; justify-content:center;">${svgIcon('usb', 20, 'var(--danger)')}</div>
+        <div style="font-family:var(--font-display); font-size:19px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--ink);">Board Disconnected</div>
+      </div>
+      <div style="font-size:13px; color:var(--ink-2); line-height:1.6; margin-bottom:20px;">
+        The J-Link probe is no longer detected — the board was likely unplugged.${sessionDropped ? '<br><b style="color:var(--ink);">Your active J-Link session was dropped.</b>' : ''}
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button id="dcDismiss" style="padding:10px 18px; background:transparent; color:var(--ink-2); border:1px solid var(--line-2); border-radius:2px; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;" data-hover="border-color:var(--brand); color:var(--brand);">Close Message</button>
+        <button id="dcBack" style="padding:10px 18px; background:var(--brand); color:var(--brand-on); border:1px solid var(--brand); border-radius:2px; font-family:var(--font-body); font-size:13px; font-weight:700; cursor:pointer;">Back to Scan Page</button>
+      </div>
+    </div>`;
+  app.appendChild(back);   // inside #app so theme CSS variables (--panel, --ink…) resolve
+  const close = () => { back.remove(); disconnectShown = false; };
+  $('dcDismiss').addEventListener('click', close);
+  $('dcBack').addEventListener('click', () => { close(); closeOverlay(); showHero(); });
+  back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  wireInteractions(back);
+}
+
 // ── Collapsibles ────────────────────────────────────────────
 function setCollapse(headChevronId, bodyId, open) {
   $(bodyId).classList.toggle('hidden', !open);
@@ -672,7 +769,7 @@ async function startScan() {
   ];
   if (hero) $('heroProgress').classList.remove('hidden');
   termWrite('\nJ-Link> auto-identify\n', 'var(--term-info)');
-  const anim = startProgressAnim(progressTargets, SCAN_PHASES, 620, (label) => termWrite('  ' + label + '\n', 'var(--term-fg)'));
+  const anim = startProgressAnim(progressTargets, SCAN_PHASES, 200, (label) => termWrite('  ' + label + '\n', 'var(--term-fg)'));
   const minHold = sleep(SCAN_MIN_MS);
 
   let r = null, errorMsg = '';
@@ -692,26 +789,29 @@ async function startScan() {
     errorMsg = err.message;
   }
 
-  // hold for the dramatic minimum, then settle the meter to 100%
+  // hold for the brief minimum, then settle the meter to 100%
   await minHold;
   anim.finish();
-  await sleep(550);
+  await sleep(250);
   $('heroProgress').classList.add('hidden');
 
   const found = !!(r && r.connected);
 
   if (found) {
     const inf = r.info || {};
-    const board = inf.vendorHint && inf.vendorHint.board;
+    const hint = inf.vendorHint || null;
+    const board = hint && hint.board;
+    const approx = !!(hint && hint.approximate);
     termWrite('target found.\n', 'var(--term-prompt)');
-    termWrite(`Found ${inf.core || 'core'}${inf.vendorHint ? ', ' + inf.vendorHint.vendor + ' ' + (inf.vendorHint.partNumber || '') + (board ? ' (' + board + ')' : '') : ''}.\n`, 'var(--term-fg)');
-    setProbeBadge(board || inf.core || 'Target Found', true);
+    termWrite(`Found ${inf.core || 'core'}${hint ? ', ' + hint.vendor + ' ' + (hint.partNumber || '') + (board && !approx ? ' (' + board + ')' : '') : ''}.\n`, 'var(--term-fg)');
+    setProbeBadge((approx ? inf.core : board) || inf.core || 'Target Found', true);
     if (hero) dismissHero();
     renderResult(r);
     openOverlay();
     showOverlaySection('result');
     currentBoard = board || null;
     if (board) loadProjects(board);
+    startProbeWatch();   // watch for the board being unplugged → return to scan
   } else {
     // FAILURE — surface the reason where the user already is; do NOT advance.
     termWrite((errorMsg ? '[' + errorMsg + ']' : 'no target responded.') + '\n', 'var(--term-error)');
@@ -808,11 +908,17 @@ function renderResult(r) {
   const hint = inf.vendorHint || null;
   setOverlayHeader('Target Identified', 'radar');
 
-  const board = (hint && hint.board) || inf.detectedDevice || inf.core || 'Target';
+  const approx = !!(hint && hint.approximate);   // core known, exact board guessed
+  const board = approx
+    ? (inf.core || 'Renesas RA Target')
+    : ((hint && hint.board) || inf.detectedDevice || inf.core || 'Target');
   const part = (hint && hint.partNumber) || '';
   const family = hint && hint.vendor && hint.family ? `${hint.vendor} · ${hint.family}` : (inf.core || '');
   const applyDevice = inf.detectedDevice || (hint && hint.partNumber) || '';
   const applyIface = r.interface || 'SWD';
+  // Other Renesas boards built on the same MCU group (EK / FPB / CK / MCK / RSSK),
+  // or — when only the core is known — every board sharing that core.
+  const variants = (hint && Array.isArray(hint.boards)) ? hint.boards : (board ? [board] : []);
 
   const infoItems = buildDeviceInfo(inf, r);
 
@@ -820,13 +926,22 @@ function renderResult(r) {
     <div style="display:flex; align-items:center; gap:18px; background:var(--panel); border:1px solid color-mix(in srgb, var(--brand) 30%, var(--line)); border-top:3px solid var(--brand); border-radius:2px; padding:20px 22px; margin-bottom:18px; animation:brandGlow 2.4s ease-in-out infinite;">
       <div style="flex-shrink:0; width:54px; height:54px; border-radius:50%; background:var(--brand); display:flex; align-items:center; justify-content:center;">${svgIcon('check', 28, 'var(--brand-on)')}</div>
       <div style="flex:1; min-width:0;">
-        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.14em; color:var(--brand); font-weight:700; margin-bottom:5px;">Target Identified</div>
-        <div style="font-family:var(--font-display); font-size:30px; font-weight:700; line-height:1.05; letter-spacing:0.01em; color:var(--ink);">${escHtml(board)}</div>
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.14em; color:var(--brand); font-weight:700; margin-bottom:5px;">${approx ? 'Core Identified' : 'Target Identified'}</div>
+        <div id="idBoardName" style="font-family:var(--font-display); font-size:30px; font-weight:700; line-height:1.05; letter-spacing:0.01em; color:var(--ink);">${escHtml(board)}</div>
         ${part ? `<div style="font-family:var(--font-mono); font-size:15px; font-weight:700; color:var(--brand); letter-spacing:0.04em; margin-top:4px;">${escHtml(part)}</div>` : ''}
         ${family ? `<div style="font-size:13px; color:var(--ink-2); margin-top:5px;">${escHtml(family)}</div>` : ''}
+        ${approx ? `<div style="font-size:12px; color:var(--ink-3); margin-top:6px;">Exact board couldn't be auto-detected — pick yours below to load its examples.</div>` : ''}
       </div>
       <span style="flex-shrink:0; align-self:flex-start; font-size:12px; font-weight:700; padding:5px 12px; border-radius:2px; background:var(--brand-soft); color:var(--brand); border:1px solid color-mix(in srgb, var(--brand) 35%, transparent);">${escHtml(applyIface)}</span>
     </div>
+
+    ${variants.length > 1 ? `
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-3); margin-bottom:8px;">${approx ? 'Select your board to load its FSP examples' : 'Boards with this MCU — pick one to browse its examples'}</div>
+      <div id="boardVariants" style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${variants.map((b, i) => `<button class="board-variant" data-board="${escHtml(b)}" data-active="${i === 0 ? '1' : '0'}" style="padding:7px 14px; border-radius:2px; font-family:var(--font-body); font-size:12px; font-weight:700; cursor:pointer; border:1px solid ${i === 0 ? 'var(--brand)' : 'var(--line-2)'}; background:${i === 0 ? 'var(--brand-soft)' : 'var(--panel-2)'}; color:${i === 0 ? 'var(--brand)' : 'var(--ink-2)'};">${escHtml(b)}</button>`).join('')}
+      </div>
+    </div>` : ''}
 
     <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:18px;">
       ${infoItems.map(([k, v]) => infoCard(k, v)).join('')}
@@ -882,6 +997,29 @@ function renderResult(r) {
       $('projectsChevron').style.transform = projOpen ? 'rotate(0deg)' : 'rotate(-90deg)';
     });
     $('projectSearch').addEventListener('input', (e) => filterProjects(e.target.value));
+  }
+
+  // wire board-variant switcher — re-targets FSP examples & e2 studio at the
+  // chosen board (EK / FPB / CK / MCK / RSSK) without re-scanning the hardware.
+  if (variants.length > 1) {
+    $('resultBox').querySelectorAll('.board-variant').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const b = btn.dataset.board;
+        currentBoard = b;
+        const nameEl = $('idBoardName');
+        if (nameEl) nameEl.textContent = b;
+        $('resultBox').querySelectorAll('.board-variant').forEach(o => {
+          const on = o === btn;
+          o.dataset.active = on ? '1' : '0';
+          o.style.borderColor = on ? 'var(--brand)' : 'var(--line-2)';
+          o.style.background  = on ? 'var(--brand-soft)' : 'var(--panel-2)';
+          o.style.color       = on ? 'var(--brand)' : 'var(--ink-2)';
+        });
+        const grid = $('projectGrid');
+        if (grid) grid.innerHTML = `<div style="grid-column:1/-1; padding:14px; text-align:center; font-size:13px; color:var(--ink-3);">Loading…</div>`;
+        loadProjects(b);
+      });
+    });
   }
   wireInteractions($('resultBox'));
 }
