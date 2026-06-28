@@ -699,8 +699,12 @@ function parsePartNumber(output) {
     if (!m) continue;
     const ascii = m[1].trim().split(/\s+/)
       .map(h => String.fromCharCode(parseInt(h, 16))).join('');
-    const pm = ascii.match(/R7FA([0-9][A-Z][0-9])([A-Z0-9]*)/);
-    if (pm) return { group: 'RA' + pm[1], partNumber: 'R7FA' + pm[1] + pm[2] };
+    // RA0/RA2-entry parts store the 16-byte string byte-reversed at 0x01001C10
+    // (e.g. "LFC3703E2AF7R" → "R7FA2E3073CFL"), so try both orderings.
+    for (const cand of [ascii, [...ascii].reverse().join('')]) {
+      const pm = cand.match(/R7FA([0-9][A-Z][0-9])([A-Z0-9]*)/);
+      if (pm) return { group: 'RA' + pm[1], partNumber: 'R7FA' + pm[1] + pm[2] };
+    }
   }
   return null;
 }
