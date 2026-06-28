@@ -109,6 +109,9 @@ REST (all under `/api`):
 - `POST /run-script` — non-interactive J-Link script (`-CommanderScript`).
 - `GET /examples?board=<EK-RAxxxx>` — lists FSP example projects from GitHub
   (30-min in-memory cache, serves stale on rate-limit).
+- `GET /board-info?board=<EK-RAxxxx>` — board photo + info links. Scrapes the
+  official board image from `renesas.com/.../boards-kits/<slug>` (24h cache) and
+  derives links; returns `imageUrl: null` gracefully when the page is missing.
 - `POST /open-e2studio` — sparse-git-clones one example, headless-imports it into
   an Eclipse workspace, launches e2 studio.
 - `POST /set-github-token`, `GET /github-status`.
