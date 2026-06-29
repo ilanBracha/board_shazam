@@ -1061,6 +1061,23 @@ app.get('/api/e2studio-path', (req, res) => {
   res.json({ path: E2STUDIO_EXE, found: !!E2STUDIO_EXE });
 });
 
+// REST: app/about info — version, board-catalog size, and the detected toolchain.
+app.get('/api/about', (req, res) => {
+  const boards = new Set();
+  RA_CATALOG.forEach(e => e.boards.forEach(b => boards.add(b)));
+  let version = '1.0.0';
+  try { version = require('./package.json').version || version; } catch {}
+  res.json({
+    name:     'board_shazam',
+    version,
+    groups:   RA_CATALOG.length,
+    boards:   boards.size,
+    jlink:    JLINK_EXE   || null,
+    e2studio: E2STUDIO_EXE || null,
+    node:     process.version,
+  });
+});
+
 // Run a command to completion; resolve {code, out}, reject only on spawn error.
 function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
