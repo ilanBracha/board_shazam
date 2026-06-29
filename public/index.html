@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>J-Link Web Interface</title>
+<title>board shazam</title>
 
 <!-- ============================================================
      Renesas design system — fonts (self-hosted from /assets)
@@ -117,8 +117,8 @@
     <img class="wm-dark" src="assets/renesas-dark.png" alt="Renesas" style="height:24px; width:auto; display:none;">
     <div style="width:1px; height:30px; background:var(--line-2);"></div>
     <div style="display:flex; flex-direction:column; gap:2px; line-height:1;">
-      <span style="font-family:var(--font-display); font-size:18px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink);">J-Link Web Interface</span>
-      <span style="font-size:11px; letter-spacing:0.05em; color:var(--ink-3); text-transform:uppercase;">SEGGER J-Link · Target Control</span>
+      <span style="font-family:var(--font-display); font-size:18px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--ink);">board shazam</span>
+      <span style="font-size:11px; letter-spacing:0.05em; color:var(--ink-3); text-transform:uppercase;">Shazam-style auto-identification for Renesas RA boards</span>
     </div>
 
     <div style="flex:1;"></div>
@@ -521,7 +521,7 @@ function termWrite(text, colorVar) {
 }
 function seedTerminal() {
   terminal.innerHTML = '';
-  termWrite('SEGGER J-Link Web Interface\n', 'var(--term-info)');
+  termWrite('board shazam\n', 'var(--term-info)');
   termWrite('Press SCAN to auto-identify a target, or start a session.\n\n', 'var(--term-exit)');
 }
 
@@ -677,7 +677,7 @@ function onBoardDisconnected(sessionDropped) {
   if (ws) { try { stopSession(); } catch (e) {} }
   setProbeBadge('Board Disconnected', false);
   termWrite('\n[Board disconnected' + (sessionDropped ? ' — J-Link session dropped' : '') + ']\n', 'var(--term-error)');
-  showDisconnectDialog(sessionDropped);
+  showConnectionLost(sessionDropped);
 }
 
 // Catch an unplug DURING an interactive session: the J-Link process drops, which
@@ -691,39 +691,32 @@ function maybeSessionDropped() {
   }, 300);   // let the probe be released before querying it
 }
 
-// Modal: explain the disconnect and offer to dismiss or return to the scan page.
-function showDisconnectDialog(sessionDropped) {
-  if (document.getElementById('disconnectBackdrop')) return;
+// Connection lost: return to the scan landing page and show the reason there, so
+// the user can simply reconnect and scan again (no modal to dismiss first). The
+// disconnectShown flag keeps the watchdog paused until the next scan clears it.
+function showConnectionLost(sessionDropped) {
   disconnectShown = true;
-  const back = document.createElement('div');
-  back.id = 'disconnectBackdrop';
-  back.style.cssText = 'position:fixed; inset:0; z-index:110; background:rgba(20,20,30,0.55); display:flex; align-items:center; justify-content:center; padding:24px;';
-  back.innerHTML = `
-    <div role="alertdialog" aria-modal="true" style="width:min(440px,92vw); background:var(--panel); border:1px solid var(--line); border-top:3px solid var(--danger); border-radius:4px; box-shadow:var(--shadow-pop); padding:24px;">
-      <div style="display:flex; align-items:center; gap:11px; margin-bottom:13px;">
-        <div style="flex-shrink:0; width:38px; height:38px; border-radius:50%; background:var(--danger-soft); display:flex; align-items:center; justify-content:center;">${svgIcon('usb', 20, 'var(--danger)')}</div>
-        <div style="font-family:var(--font-display); font-size:19px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--ink);">Board Disconnected</div>
-      </div>
-      <div style="font-size:13px; color:var(--ink-2); line-height:1.6; margin-bottom:20px;">
-        The J-Link probe is no longer detected — the board was likely unplugged.${sessionDropped ? '<br><b style="color:var(--ink);">Your active J-Link session was dropped.</b>' : ''}
-      </div>
-      <div style="display:flex; gap:10px; justify-content:flex-end;">
-        <button id="dcDismiss" style="padding:10px 18px; background:transparent; color:var(--ink-2); border:1px solid var(--line-2); border-radius:2px; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;" data-hover="border-color:var(--brand); color:var(--brand);">Close Message</button>
-        <button id="dcBack" style="padding:10px 18px; background:var(--brand); color:var(--brand-on); border:1px solid var(--brand); border-radius:2px; font-family:var(--font-body); font-size:13px; font-weight:700; cursor:pointer;">Back to Scan Page</button>
+  closeOverlay();
+  showHero();              // back to the scan page (this also clears #heroError)
+  const detail = 'The J-Link probe is no longer detected — the board was likely unplugged.'
+               + (sessionDropped ? ' Your active J-Link session was dropped.' : '');
+  $('heroError').innerHTML = `
+    <div role="alert" style="background:var(--panel); border:1px solid var(--line); border-top:3px solid var(--danger); border-radius:4px; box-shadow:var(--shadow-pop); padding:18px 20px; display:flex; align-items:center; gap:13px;">
+      <div style="flex-shrink:0; width:38px; height:38px; border-radius:50%; background:var(--danger-soft); display:flex; align-items:center; justify-content:center;">${svgIcon('usb', 20, 'var(--danger)')}</div>
+      <div>
+        <div style="font-family:var(--font-display); font-size:16px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--ink); margin-bottom:3px;">Board Disconnected</div>
+        <div style="font-size:13px; color:var(--ink-2); line-height:1.55;">${escHtml(detail)} Reconnect the board and scan again.</div>
       </div>
     </div>`;
-  app.appendChild(back);   // inside #app so theme CSS variables (--panel, --ink…) resolve
-  const close = () => { back.remove(); disconnectShown = false; };
-  $('dcDismiss').addEventListener('click', close);
-  $('dcBack').addEventListener('click', () => { close(); closeOverlay(); showHero(); });
-  back.addEventListener('click', (e) => { if (e.target === back) close(); });
-  wireInteractions(back);
+  $('heroError').classList.remove('hidden');
+  wireInteractions($('heroError'));
 }
 
 // ── About dialog ────────────────────────────────────────────
 const CONTRIBUTORS = [
-  { name: 'Ilan Braha',  role: 'Renesas', url: 'mailto:ilan.braha.ks@renesas.com' },
-  { name: 'Matan Cohen', role: 'Renesas', url: 'mailto:matan.cohen.yw@renesas.com' },
+  { name: 'Ilan Braha',    email: 'ilan.braha.ks@renesas.com' },
+  { name: 'Matan Cohen',   email: 'matan.cohen.yw@renesas.com' },
+  { name: 'Aviad Brikman', email: 'aviad.brikman.px@renesas.com' },
 ];
 async function showAbout() {
   if (document.getElementById('aboutBackdrop')) return;
@@ -778,8 +771,7 @@ async function showAbout() {
       <div style="display:flex; flex-direction:column; gap:7px;">
         ${CONTRIBUTORS.map(c => `<div style="display:flex; align-items:center; gap:10px;">
           <div style="flex-shrink:0; width:26px; height:26px; border-radius:50%; background:var(--brand-soft); color:var(--brand); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;">${escHtml(c.name.split(' ').map(w=>w[0]).join('').slice(0,2))}</div>
-          <a href="${escHtml(c.url)}" rel="noopener" style="font-size:13px; font-weight:700; color:var(--brand); text-decoration:none;" data-hover="text-decoration:underline;">${escHtml(c.name)}</a>
-          <div style="font-size:12px; color:var(--ink-3);">${escHtml(c.role)}</div>
+          <a href="mailto:${escHtml(c.email)}" rel="noopener" style="font-size:13px; font-weight:700; color:var(--brand); text-decoration:none;" data-hover="text-decoration:underline;">${escHtml(c.email)}</a>
         </div>`).join('')}
       </div>
 
@@ -844,6 +836,7 @@ let scanning = false;
 async function startScan() {
   if (scanning) return;
   scanning = true;
+  disconnectShown = false;                       // re-arm the disconnect watchdog
   setScanning(true);
   setProbeBadge('Scanning…', false);
   const hero = state.mode === 'hero';
@@ -1053,9 +1046,9 @@ function renderResult(r) {
         <span style="font-size:13px; font-weight:700; letter-spacing:0.03em; color:var(--ink);">FSP Example Projects</span>
         <span id="projectCount" style="font-size:12px; color:var(--ink-3);"></span>
         <span style="flex:1;"></span>
-        <span id="projectsChevron" style="display:inline-flex; transform:rotate(-90deg); transition:transform .2s; color:var(--ink-3);">${svgIcon('chevron-down', 16, 'currentColor')}</span>
+        <span id="projectsChevron" style="display:inline-flex; transform:rotate(0deg); transition:transform .2s; color:var(--ink-3);">${svgIcon('chevron-down', 16, 'currentColor')}</span>
       </div>
-      <div id="projectsBody" class="hidden">
+      <div id="projectsBody">
         <div style="padding:12px 16px; border-bottom:1px solid var(--line);">
           <div style="display:flex; align-items:center; gap:9px; background:var(--panel-2); border:1px solid var(--line-2); border-radius:2px; padding:0 12px;">
             ${svgIcon('search', 15, 'var(--ink-3)')}
@@ -1083,7 +1076,7 @@ function renderResult(r) {
 
   // wire projects collapse + search
   if (hint && hint.board) {
-    let projOpen = false;
+    let projOpen = true;
     $('projectsHead').addEventListener('click', () => {
       projOpen = !projOpen;
       $('projectsBody').classList.toggle('hidden', !projOpen);
@@ -1142,19 +1135,32 @@ async function loadBoardInfo(board) {
     const links = (d.links || []).map(l =>
       `<a href="${escHtml(l.url)}" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; padding:8px 12px; background:var(--panel-2); border:1px solid var(--line-2); border-radius:2px; color:var(--brand); font-size:12px; font-weight:700; text-decoration:none;" data-hover="border-color:var(--brand); background:var(--brand-soft);">${escHtml(l.label)} ↗</a>`
     ).join('');
+    // Documents from the Renesas board page, grouped by type (Quick Start Guide,
+    // User's Manual, Application Note, …). Lets the user browse them without leaving.
+    const docGroups = (d.documents || []).map(g =>
+      `<div>
+         <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-3); margin-bottom:6px;">${escHtml(g.category)}</div>
+         <div style="display:flex; flex-direction:column; gap:5px;">
+           ${(g.items || []).map(it =>
+             `<a href="${escHtml(it.url)}" target="_blank" rel="noopener" style="display:inline-flex; align-items:baseline; gap:6px; color:var(--brand); font-size:13px; text-decoration:none;" data-hover="text-decoration:underline;"><span>${escHtml(it.title)}</span><span style="font-size:11px;">↗</span></a>`
+           ).join('')}
+         </div>
+       </div>`
+    ).join('');
     const img = d.imageUrl
       ? `<div style="flex-shrink:0; width:180px; height:150px; background:var(--raise); border:1px solid var(--line); border-radius:2px; display:flex; align-items:center; justify-content:center; padding:10px;">
            <img src="${escHtml(d.imageUrl)}" alt="${escHtml(board)}" referrerpolicy="no-referrer" style="max-width:100%; max-height:100%; object-fit:contain;" onerror="this.parentElement.style.display='none'">
          </div>`
       : '';
-    if (!d.imageUrl && !links) { box.innerHTML = ''; return; }
+    if (!d.imageUrl && !links && !docGroups) { box.innerHTML = ''; return; }
     box.innerHTML = `
-      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:16px; margin-bottom:18px;">
+      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; background:var(--panel); border:1px solid var(--line); border-radius:2px; padding:16px; margin-bottom:18px;">
         ${img}
-        <div style="flex:1; min-width:200px;">
+        <div style="flex:0 1 220px; min-width:180px;">
           <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-3); margin-bottom:10px;">${escHtml(board)} — Board Information</div>
           <div style="display:flex; flex-wrap:wrap; gap:8px;">${links}</div>
         </div>
+        ${docGroups ? `<div style="flex:1; min-width:220px; display:flex; flex-direction:column; gap:14px;">${docGroups}</div>` : ''}
       </div>`;
     wireInteractions(box);
   } catch (e) { box.innerHTML = ''; }
@@ -1408,7 +1414,7 @@ function init() {
   $('btnClear').addEventListener('click', () => { terminal.innerHTML = ''; });
 
   // overlay
-  $('btnCloseOverlay').addEventListener('click', closeOverlay);
+  $('btnCloseOverlay').addEventListener('click', () => { closeOverlay(); stopProbeWatch(); showHero(); });
 
   // e2 modal
   $('btnCloseE2').addEventListener('click', closeE2);

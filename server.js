@@ -1022,6 +1022,92 @@ function findBoardImage(html, slug) {
   return null;
 }
 
+// Renesas document URLs look like /en/document/<type>/<slug>?r=<node>. The <type>
+// segment is the document category; map the common ones to human labels. Unknown
+// types fall back to a generic heading rather than guessing.
+const DOC_TYPE_LABELS = {
+  qsg: 'Quick Start Guide',
+  mat: 'Manual - Development Tools',
+  man: 'Manual',
+  dst: 'Datasheet',
+  apn: 'Application Note',
+  an:  'Application Note',
+  pcs: 'PCB Design Files',
+  scd: 'Schematics',
+  rln: 'Release Note',
+  whp: 'White Paper',
+  fly: 'Flyer / Brochure',
+  swd: 'Software & Tools',
+};
+// Display order for the document groups (most useful first); anything not listed
+// is appended after these in discovery order.
+const DOC_GROUP_ORDER = [
+  'Quick Start Guide', 'Manual - Development Tools', 'Manual', 'Datasheet',
+  'Application Note', 'PCB Design Files', 'Schematics', 'Release Note',
+  'Software & Tools', 'White Paper', 'Flyer / Brochure', 'Documentation',
+];
+
+// Strip tags + decode the handful of HTML entities Renesas uses in link text.
+function cleanText(s) {
+  return String(s == null ? '' : s)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#8217;|&rsquo;/gi, '’')
+    .replace(/&#8211;|&ndash;/gi, '–')
+    .replace(/&#8212;|&mdash;/gi, '—')
+    .replace(/&quot;/gi, '"')
+    .replace(/&[a-z0-9#]+;/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Fallback title derived from the document slug when no link text is available.
+// "fpb-ra2e3-v1-users-manual" (+ board FPB-RA2E3) -> "FPB-RA2E3 v1 User's Manual".
+function slugToTitle(slug, board) {
+  const bslug = String(board || '').toLowerCase();
+  let rest = slug, prefix = '';
+  if (slug === bslug) return String(board).toUpperCase();
+  if (bslug && slug.startsWith(bslug + '-')) { prefix = String(board).toUpperCase(); rest = slug.slice(bslug.length + 1); }
+  const words = rest.split('-').filter(Boolean).map(tok => {
+    if (/^v\d+$/i.test(tok)) return tok.toLowerCase();
+    if (tok === 'users') return "User's";
+    return tok.charAt(0).toUpperCase() + tok.slice(1);
+  });
+  return [prefix, ...words].filter(Boolean).join(' ');
+}
+
+// Parse all Renesas document links out of a board page's raw HTML, grouped by
+// document type. Returns [{ category, items: [{ title, url }] }] in DOC_GROUP_ORDER.
+// Works on whatever the page server-renders; documents loaded client-side (Coveo)
+// are not present in the HTML and so won't appear here.
+function parseBoardDocuments(html, board) {
+  if (!html) return [];
+  const re = /<a\b[^>]*\bhref=["']([^"']*\/document\/([a-z0-9]{2,6})\/([a-z0-9][a-z0-9_-]*)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const seen = new Set();
+  const byCat = new Map();
+  let m;
+  while ((m = re.exec(html))) {
+    let [, url, code, slug, inner] = m;
+    if (url.startsWith('//')) url = 'https:' + url;
+    else if (url.startsWith('/')) url = 'https://www.renesas.com' + url;
+    const key = url.split('?')[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const text = cleanText(inner);
+    const title = (text && text.length <= 120) ? text : slugToTitle(slug, board);
+    const category = DOC_TYPE_LABELS[code.toLowerCase()] || 'Documentation';
+    if (!byCat.has(category)) byCat.set(category, []);
+    byCat.get(category).push({ title, url });
+  }
+  return [...byCat.entries()]
+    .sort((a, b) => {
+      const ia = DOC_GROUP_ORDER.indexOf(a[0]), ib = DOC_GROUP_ORDER.indexOf(b[0]);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    })
+    .map(([category, items]) => ({ category, items }));
+}
+
 // REST: board picture + useful information links for an identified board.
 // Image is scraped from the official Renesas board page (cached 24h); links are
 // derived from the board name. Always returns links even if the image/page is
@@ -1042,15 +1128,25 @@ app.get('/api/board-info', async (req, res) => {
     board,
     productUrl,
     imageUrl: null,
+    documents: [],
     links: [
-      { label: 'Renesas Board Page',    url: productUrl },
-      { label: 'Documents & Downloads', url: `https://www.renesas.com/en/search?q=${encodeURIComponent(board)}` },
-      { label: 'FSP Example Projects',  url: `https://github.com/renesas/ra-fsp-examples/tree/master/example_projects/${ghSlug}` },
+      { label: 'Renesas Board Page',   url: productUrl },
+      { label: 'FSP Example Projects', url: `https://github.com/renesas/ra-fsp-examples/tree/master/example_projects/${ghSlug}` },
     ],
   };
+  let html = '';
   try {
-    data.imageUrl = findBoardImage(await httpGetText(productUrl), slug);
+    html = await httpGetText(productUrl);
   } catch { /* page missing (e.g. legacy board) — links still useful */ }
+  if (html) {
+    data.imageUrl  = findBoardImage(html, slug);
+    data.documents = parseBoardDocuments(html, board);
+  }
+  // Fallback: if the page exposed no document links (or was unreachable), keep a
+  // site-search link so the user can still find docs.
+  if (!data.documents.length) {
+    data.links.push({ label: 'Documents & Downloads', url: `https://www.renesas.com/en/search?q=${encodeURIComponent(board)}` });
+  }
 
   boardInfoCache.set(board, { at: Date.now(), data });
   res.json(data);
